@@ -9,6 +9,18 @@ import RestaurentOnline from './Components/RestaurentOnline';
 function App() {
   return (
     <div>
+
+      {/* ✅ Version Banner */}
+      <div style={{
+        backgroundColor: "black",
+        color: "white",
+        textAlign: "center",
+        padding: "10px",
+        fontWeight: "bold"
+      }}>
+        Swiggy Clone - {process.env.REACT_APP_VERSION}
+      </div>
+
       <Navigate/>
       <OffersBanner/>
       <RestaurentChain/>
