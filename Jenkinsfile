@@ -6,8 +6,9 @@ pipeline {
     }
 
     environment {
-        // Sonar
+        // SonarQube
         SONAR_SERVER = 'sonar-server'
+        SONAR_TOKEN  = credentials('sonar-token')
 
         // Docker
         DOCKERHUB_CRED = credentials('docker')
@@ -20,31 +21,60 @@ pipeline {
 
     stages {
 
+        // ===============================
+        // CHECKOUT
+        // ===============================
         stage('Checkout') {
             steps {
                 git url: 'https://github.com/yesk993-ops/swiggy-clone.git', branch: 'main'
             }
         }
 
-        stage('Docker Build') {
+        // ===============================
+        // SONARQUBE ANALYSIS
+        // ===============================
+        stage('SonarQube Analysis') {
             steps {
-                dir('Swiggy_clone') {
-                    sh """
-                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                    """
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+                    withSonarQubeEnv("${SONAR_SERVER}") {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                            -Dsonar.projectKey=swiggy_clone \
+                            -Dsonar.sources=. \
+                            -Dsonar.login=${SONAR_TOKEN}
+                        """
+                    }
                 }
             }
         }
 
+        // ===============================
+        // DOCKER BUILD
+        // ===============================
+        stage('Docker Build') {
+            steps {
+                     {
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                }
+            }
+        }
+
+        // ===============================
+        // TRIVY SCAN
+        // ===============================
         stage('Trivy Scan') {
             steps {
                 sh """
-                    trivy image ${IMAGE_NAME}:${IMAGE_TAG} > ${TRIVY_REPORT} || true
+                    trivy image --severity HIGH,CRITICAL ${IMAGE_NAME}:${IMAGE_TAG} > ${TRIVY_REPORT} || true
                     cat ${TRIVY_REPORT}
                 """
             }
         }
 
+        // ===============================
+        // PUSH IMAGE
+        // ===============================
         stage('Push Image') {
             steps {
                 sh """
@@ -57,12 +87,10 @@ pipeline {
         // ===============================
         // DEPLOY BLUE
         // ===============================
-
         stage('Deploy Blue') {
             steps {
                 dir('k8s') {
 
-                    // Inject image tag dynamically
                     sh """
                         sed -i 's|IMAGE_TAG|${IMAGE_TAG}|g' blue-deployment.yaml
                     """
@@ -70,10 +98,7 @@ pipeline {
                     sh "kubectl apply -f blue-deployment.yaml"
                     sh "kubectl apply -f service.yaml"
 
-                    // Wait for rollout
                     sh "kubectl rollout status deployment/swiggy-blue --timeout=180s"
-
-                    // Verify pods
                     sh "kubectl get pods -l version=blue"
                 }
             }
@@ -82,16 +107,17 @@ pipeline {
         stage('Verify Blue Service') {
             steps {
                 sh """
-                    echo "Checking Blue Service endpoints..."
                     kubectl get svc swiggy-service
                     kubectl get endpoints swiggy-service
                 """
             }
         }
 
-        stage('Wait 60 Seconds Before Green') {
+        // ===============================
+        // WAIT BEFORE GREEN
+        // ===============================
+        stage('Wait 60 Seconds') {
             steps {
-                echo "Waiting 60 seconds..."
                 sleep(time: 60, unit: 'SECONDS')
             }
         }
@@ -99,7 +125,6 @@ pipeline {
         // ===============================
         // DEPLOY GREEN
         // ===============================
-
         stage('Deploy Green') {
             steps {
                 dir('k8s') {
@@ -109,10 +134,7 @@ pipeline {
                     """
 
                     sh "kubectl apply -f green-deployment.yaml"
-
-                    // Wait for green rollout
                     sh "kubectl rollout status deployment/swiggy-green --timeout=180s"
-
                     sh "kubectl get pods -l version=green"
                 }
             }
@@ -120,22 +142,18 @@ pipeline {
 
         stage('Verify Green Pods') {
             steps {
-                sh """
-                    echo "Verifying Green pods..."
-                    kubectl get pods -l version=green
-                """
+                sh "kubectl get pods -l version=green"
             }
         }
 
         // ===============================
         // SWITCH TRAFFIC
         // ===============================
-
         stage('Switch Traffic To Green') {
             steps {
                 sh """
-                kubectl patch service swiggy-service \
-                -p '{"spec":{"selector":{"app":"swiggy","version":"green"}}}'
+                    kubectl patch service swiggy-service \
+                    -p '{"spec":{"selector":{"app":"swiggy","version":"green"}}}'
                 """
             }
         }
@@ -143,7 +161,6 @@ pipeline {
         stage('Verify Green Service') {
             steps {
                 sh """
-                    echo "Checking Green service endpoints..."
                     kubectl get svc swiggy-service
                     kubectl get endpoints swiggy-service
                 """
@@ -162,10 +179,10 @@ pipeline {
             archiveArtifacts artifacts: "${TRIVY_REPORT}", allowEmptyArchive: true
         }
         success {
-            echo 'Blue-Green Deployment Completed Successfully!'
+            echo "Blue-Green Deployment Completed Successfully!"
         }
         failure {
-            echo 'Pipeline Failed!'
+            echo "Pipeline Failed!"
         }
     }
 }
