@@ -16,7 +16,8 @@ spec:
     spec:
       containers:
       - name: swiggy-container
-        image: mydocker3692/swiggy-v1
+        image: mydocker3692/swiggy-clone:IMAGE_TAG
         imagePullPolicy: Always
         ports:
         - containerPort: 80
+
